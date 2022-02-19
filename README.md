@@ -18,7 +18,7 @@ I installed docker and started with the mysql docker image.
 docker run --name=mysql1 -p 3306:3306 -e MYSQL_ROOT_PASSWORD=123456 -d mysql:latest
 ```
 
-This of course is not save but that is fine as we only need it locally to pull it with python.
+This of course is not secure but that is fine as we only need it locally to pull it with python.
 
 **3) Import data into mysql**
 
