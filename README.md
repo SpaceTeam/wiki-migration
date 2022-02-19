@@ -1,4 +1,6 @@
-# Bring the old wiki to the new wiki
+# wiki-migration
+
+Migrate the old [Space Team](https://spaceteam.at/?lang=en) mediawiki to bookstack.
 
 **1) Get a DB dump and images folder**
 
