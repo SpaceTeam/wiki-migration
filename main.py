@@ -1,13 +1,18 @@
+import base64
 from dataclasses import dataclass
 from datetime import datetime
-from functools import reduce
+import hashlib
 import json
+import os
 import re
+import subprocess
 from textwrap import indent
+from urllib import request
 from ascii import translate_to_ascii
 
 import mysql.connector
 import mwparserfromhell
+import requests
 import toml
 
 
@@ -103,24 +108,101 @@ def wikilink_to_slug(link: str) -> str:
     return link
 
 
+def mediawiki_to_markdown(content: str) -> str:
+    proc = subprocess.run(
+        [
+            "pandoc",
+            "-f",
+            "mediawiki",
+            "-t",
+            "markdown",
+        ],
+        input=content.encode(),
+        capture_output=True,
+    )
+    return proc.stdout.decode()
+
+
+def find_similar_file(name: str) -> str:
+    """
+    Since MediaWiki is not casesensitive with filenames we might have a
+    misspelled filename here so we try to find a file that loosley matches our
+    filename.
+    """
+
+    for root, dirs, files in os.walk("images"):
+        for file in files:
+            if file.lower() == name.lower():
+                return os.path.join(root, file)
+
+    raise Exception(f"Unable to find file '{name}'")
+
+
+def load_image_base64(name: str) -> str:
+    # filenames replace spaces with underscore
+    name = name.strip().replace(" ", "_")
+
+    # Yes you are right some filenames have a f*cking invisible unicode
+    # character in them. WikiMedia accepts that so we need too.
+    name = name.replace("\u200E", "")
+
+    # Hash the filename with md5
+    hash = hashlib.md5(name.encode()).hexdigest()
+
+    # This is cursed!
+    # But apperently MediaWiki does it so we have to do it too
+    # And yes the hash gets calculated on the original name but thats not what
+    # is acutally stored then.
+    umlaute = "üÜäÄöÖ"
+    for c in umlaute:
+        name = name.replace(c, "�")
+
+    # Open the file
+    path = os.path.join("images", hash[0], hash[:2], name)
+    if not os.path.exists(path):
+        path = find_similar_file(name)
+
+    with open(path, "rb") as image:
+        content = base64.b64encode(image.read()).decode()
+
+    if name.lower().endswith("png"):
+        return "data:image/png;base64," + content
+    elif name.lower().endswith("jpg") or name.lower().endswith("jpeg"):
+        return "data:image/jpeg;base64," + content
+    elif name.lower().endswith("gif"):
+        return "data:image/gif;base64," + content
+    else:
+        raise Exception(f"Unsupported inline image: {name.lower().split('.')[-1]}")
+
+
 def process_page(config: dict, page: OldPage) -> NewPage:
+    print(f"🤖 Processing page [{page.id}] {page.title}")
+
     # Parse the mediawiki
     replace_list = {}
     wikicode = mwparserfromhell.parse(page.content)
     for node in wikicode.ifilter_wikilinks():
-        # node.title = "BIG NERDZ"
-        if ":" in node.title or "#" in node.title:
-            continue
+        if ":" not in node.title and "#" not in node.title:
+            new_link = "[" + config["bs_book_url"] + wikilink_to_slug(node.title) + "]"
+            replace_list[str(node)] = new_link
 
-        new_link = "[" + config["bs_book_url"] + wikilink_to_slug(node.title) + "]"
-        replace_list[str(node)] = new_link
+        elif re.match(r":?(Datei|File):", str(node.title)):
+            filename = node.title.split(":")[-1]
+            try:
+                new_img = f"[[File:{load_image_base64(filename)}|{filename}]]"
+                replace_list[str(node)] = new_img
+            except Exception as e:
+                print("⚠️ " + str(e))
 
     # Update the wikicode
     for old, new in replace_list.items():
-        wikicode.replace(old, new)
+        try:
+            wikicode.replace(old, new)
+        except Exception as e:
+            print("⚠️ " + str(e))
 
     # Convert the wikicode into markdown with pandoc
-    # TODO:
+    markdown = mediawiki_to_markdown(str(wikicode))
 
     # Create the tags
     tags = {c: "" for c in page.categories}
@@ -134,14 +216,34 @@ def process_page(config: dict, page: OldPage) -> NewPage:
     return NewPage(
         book_id=config["bs_book_id"],
         name=page.title,
-        markdown=str(wikicode),
+        markdown=markdown,
         tags=tags,
     )
 
 
-def upload_pages(pages: list[NewPage]):
-    # TODO: Upload to bookstack
-    pass
+def upload_pages(config: dict, pages: list[NewPage]):
+    session = requests.Session()
+    session.headers.update(
+        {
+            "Authorization": f"Token {config['bs_token_id']}:{config['bs_token_secret']}",
+        }
+    )
+
+    for i, page in enumerate(pages):
+        print(f"⬆️ [{i+1}/{len(pages)}] Upload page {page.name}")
+
+        r = session.post(
+            config["bs_api_url"] + "pages",
+            json={
+                "book_id": page.book_id,
+                "name": page.name,
+                "markdown": page.markdown,
+                "tags": [{"name": k, "value": v} for k, v in page.tags.items()],
+            },
+        )
+        if r.status_code != 200:
+            print(f"🔥 Status code was: {r.status_code}")
+            print(r.text)
 
 
 def main():
@@ -149,16 +251,22 @@ def main():
 
     print("Downloading... ")
     old_pages = download_pages(config)
+    # old_pages = old_pages[50:60]
     # print(
     #     json.dumps(
     #         process_page(config, old_pages[200]), indent=2, default=lambda p: p.__dict__
     #     )
     # )
     print("Processing... ")
+
     new_pages = list(map(lambda p: process_page(config, p), old_pages))
 
+    with open("cache.json", "w") as f:
+        f.write(json.dumps(new_pages, indent=2, default=lambda p: p.__dict__))
+
+    # print(json.dumps(new_pages[200], indent=2, default=lambda p: p.__dict__))
     # print("Uploading... ")
-    # upload_pages(new_pages)
+    upload_pages(config, new_pages)
 
 
 if __name__ == "__main__":
