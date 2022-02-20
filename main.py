@@ -240,7 +240,7 @@ def main():
     config = toml.loads(open("config.toml").read())
 
     print("Downloading... ")
-    old_pages = download_pages(config)[:1]
+    old_pages = download_pages(config)
     # old_pages = old_pages[50:60]
     # print(
     #     json.dumps(
