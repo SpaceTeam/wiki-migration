@@ -51,5 +51,9 @@ to find an image. After a bit of searching I found [documentation how images are
 First copy `config-example.toml` to `config.toml` and edit the file (the
 comments will guide you).
 
-**TODO:** This is still a work in progress and the script is not yet fully
-implemented.
+Create a virtual environment with `python3 -m venv venv` and activate it with
+`source venv/bin/activate`.
+
+Now install all requirements with `pip install -r requirements.txt`.
+
+Finally run the script `python main.py`.
