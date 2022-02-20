@@ -199,13 +199,13 @@ def process_page(config: dict, page: OldPage) -> NewPage:
     tags.update(
         {
             "Letzter Author": page.last_user_email,
-            "Zuletzt bearbeitet": page.timestamp.isoformat(),
+            "Zuletzt bearbeitet": page.timestamp.strftime("%Y-%d-%m %H:%M:%S"),
         }
     )
 
     return NewPage(
         book_id=config["bs_book_id"],
-        name=page.title,
+        name=page.title.replace("_", " "),
         html=html,
         tags=tags,
     )
