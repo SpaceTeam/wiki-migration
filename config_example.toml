@@ -1,0 +1,7 @@
+db_host = "127.0.0.1"
+db_user = "root"
+db_password = "123456"
+db_database = "old"
+
+bs_book_id = 42
+bs_book_url = "https://mywiki.com/books/test-4lQ/page/"

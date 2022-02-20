@@ -2,3 +2,4 @@ config.toml
 images/
 dump.sql
 venv/
+__pycache__/

@@ -2,8 +2,12 @@ from dataclasses import dataclass
 from datetime import datetime
 from functools import reduce
 import json
+import re
+from textwrap import indent
+from ascii import translate_to_ascii
 
 import mysql.connector
+import mwparserfromhell
 import toml
 
 
@@ -75,21 +79,86 @@ def download_pages(config: dict) -> list[OldPage]:
     return pages
 
 
-def process_pages(pages: list[OldPage]) -> list[NewPage]:
-    pass
+def wikilink_to_slug(link: str) -> str:
+    # Bookstack usses the php library: Illuminate\Support\Str and then calls
+    # the slug method on it.
+    # Here is a link to the php implementation I ported to python:
+    # https://github.com/laravel/framework/blob/5.5/src/Illuminate/Support/Str.php#L414
+
+    # Remove whitespaces and convert to lower
+    link = link.strip().lower()
+
+    # Translate to ascii
+    link = translate_to_ascii(link)
+
+    # Replace all underscores with dashes and all @ with ats
+    link = link.replace("_", "-").replace("@", "at")
+
+    # Replace all non character, seperator or digit characters
+    link = re.sub(r"[^\-\s\da-z]+", "", link)
+
+    # Replace whitespaces with seperator and multiple seperators with one
+    link = re.sub(r"[\-\s]+", "-", link)
+
+    return link
+
+
+def process_page(config: dict, page: OldPage) -> NewPage:
+    # Parse the mediawiki
+    replace_list = {}
+    wikicode = mwparserfromhell.parse(page.content)
+    for node in wikicode.ifilter_wikilinks():
+        # node.title = "BIG NERDZ"
+        if ":" in node.title or "#" in node.title:
+            continue
+
+        new_link = "[" + config["bs_book_url"] + wikilink_to_slug(node.title) + "]"
+        replace_list[str(node)] = new_link
+
+    # Update the wikicode
+    for old, new in replace_list.items():
+        wikicode.replace(old, new)
+
+    # Convert the wikicode into markdown with pandoc
+    # TODO:
+
+    # Create the tags
+    tags = {c: "" for c in page.categories}
+    tags.update(
+        {
+            "Letzter Author": page.last_user_email,
+            "Zuletzt bearbeitet": page.timestamp.isoformat(),
+        }
+    )
+
+    return NewPage(
+        book_id=config["bs_book_id"],
+        name=page.title,
+        markdown=str(wikicode),
+        tags=tags,
+    )
 
 
 def upload_pages(pages: list[NewPage]):
+    # TODO: Upload to bookstack
     pass
 
 
 def main():
     config = toml.loads(open("config.toml").read())
-    old_pages = download_pages(config)
-    new_pages = process_pages(old_pages)
-    upload_pages(new_pages)
 
-    print(reduce(lambda p1, p2: p1 if p1.timestamp < p2.timestamp else p2, pages))
+    print("Downloading... ")
+    old_pages = download_pages(config)
+    # print(
+    #     json.dumps(
+    #         process_page(config, old_pages[200]), indent=2, default=lambda p: p.__dict__
+    #     )
+    # )
+    print("Processing... ")
+    new_pages = list(map(lambda p: process_page(config, p), old_pages))
+
+    # print("Uploading... ")
+    # upload_pages(new_pages)
 
 
 if __name__ == "__main__":
