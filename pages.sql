@@ -4,4 +4,5 @@ LEFT JOIN mwcategorylinks ON mwcategorylinks.cl_from = mwpage.page_id
 WHERE mwpage.page_latest = mwrevision.rev_id
 AND mwrevision.rev_text_id = mwtext.old_id
 AND mwrevision.rev_user = mwuser.user_id
+AND mwpage.page_namespace < 6 -- We don't care about file pages, category pages etc
 GROUP BY page_id;

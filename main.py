@@ -34,7 +34,7 @@ class NewPage:
 
     book_id: int
     name: str
-    markdown: str
+    html: str
     tags: list[dict[str, str]]
 
 
@@ -63,25 +63,7 @@ def download_pages(config: dict) -> list[OldPage]:
             timestamp=datetime.strptime(row[5].decode(), "%Y%m%d%H%M%S"),
         )
 
-    fileextensions = ["png", "jpeg", "jpg", "gif", "pdf"]
-
-    iterator = map(mapper, rows)
-    iterator = filter(
-        lambda p: p.title.split(".")[-1].lower() not in fileextensions, iterator
-    )
-    pages = list(iterator)
-
-    # print(rows[100])
-    # print(mapper(rows[100]))
-    # def printer(object):
-    #     if isinstance(object, datetime):
-    #         return object.isoformat()
-    #     else:
-    #         return object.__dict__
-
-    # print(json.dumps(pages, indent=2, default=printer))
-
-    return pages
+    return list(map(mapper, rows))
 
 
 def wikilink_to_slug(link: str) -> str:
@@ -108,14 +90,14 @@ def wikilink_to_slug(link: str) -> str:
     return link
 
 
-def mediawiki_to_markdown(content: str) -> str:
+def mediawiki_to_html(content: str) -> str:
     proc = subprocess.run(
         [
             "pandoc",
             "-f",
             "mediawiki",
             "-t",
-            "markdown",
+            "html",
         ],
         input=content.encode(),
         capture_output=True,
@@ -183,7 +165,15 @@ def process_page(config: dict, page: OldPage) -> NewPage:
     wikicode = mwparserfromhell.parse(page.content)
     for node in wikicode.ifilter_wikilinks():
         if ":" not in node.title and "#" not in node.title:
-            new_link = "[" + config["bs_book_url"] + wikilink_to_slug(node.title) + "]"
+            new_text = str(node.text) if node.text else str(node.title)
+            new_link = (
+                "["
+                + config["bs_book_url"]
+                + wikilink_to_slug(node.title)
+                + " "
+                + new_text
+                + "]"
+            )
             replace_list[str(node)] = new_link
 
         elif re.match(r":?(Datei|File):", str(node.title)):
@@ -201,8 +191,8 @@ def process_page(config: dict, page: OldPage) -> NewPage:
         except Exception as e:
             print("⚠️ " + str(e))
 
-    # Convert the wikicode into markdown with pandoc
-    markdown = mediawiki_to_markdown(str(wikicode))
+    # Convert the wikicode into html with pandoc
+    html = mediawiki_to_html(str(wikicode))
 
     # Create the tags
     tags = {c: "" for c in page.categories}
@@ -216,7 +206,7 @@ def process_page(config: dict, page: OldPage) -> NewPage:
     return NewPage(
         book_id=config["bs_book_id"],
         name=page.title,
-        markdown=markdown,
+        html=html,
         tags=tags,
     )
 
@@ -237,7 +227,7 @@ def upload_pages(config: dict, pages: list[NewPage]):
             json={
                 "book_id": page.book_id,
                 "name": page.name,
-                "markdown": page.markdown,
+                "html": page.html,
                 "tags": [{"name": k, "value": v} for k, v in page.tags.items()],
             },
         )
@@ -250,7 +240,7 @@ def main():
     config = toml.loads(open("config.toml").read())
 
     print("Downloading... ")
-    old_pages = download_pages(config)
+    old_pages = download_pages(config)[:1]
     # old_pages = old_pages[50:60]
     # print(
     #     json.dumps(
