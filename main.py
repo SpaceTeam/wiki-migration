@@ -7,7 +7,6 @@ import os
 import re
 import subprocess
 from textwrap import indent
-from urllib import request
 from ascii import translate_to_ascii
 
 import mysql.connector
@@ -32,6 +31,7 @@ class OldPage:
 class NewPage:
     """Page format as needed for bookstack."""
 
+    old_id: int
     book_id: int
     name: str
     html: str
@@ -102,6 +102,12 @@ def mediawiki_to_html(content: str) -> str:
         input=content.encode(),
         capture_output=True,
     )
+
+    if proc.returncode != 0:
+        raise Exception(
+            f"Pandoc exited with code: {proc.returncode}\n{proc.stderr.decode()}"
+        )
+
     return proc.stdout.decode()
 
 
@@ -112,7 +118,7 @@ def find_similar_file(name: str) -> str:
     filename.
     """
 
-    for root, dirs, files in os.walk("images"):
+    for root, _, files in os.walk("images"):
         for file in files:
             if file.lower() == name.lower():
                 return os.path.join(root, file)
@@ -157,58 +163,87 @@ def load_image_base64(name: str) -> str:
         raise Exception(f"Unsupported inline image: {name.lower().split('.')[-1]}")
 
 
-def process_page(config: dict, page: OldPage) -> NewPage:
-    print(f"🤖 Processing page [{page.id}] {page.title}")
+def process_pages(config: dict, pages: list[OldPage]) -> list[NewPage]:
 
-    # Parse the mediawiki
-    replace_list = {}
-    wikicode = mwparserfromhell.parse(page.content)
-    for node in wikicode.ifilter_wikilinks():
-        if ":" not in node.title and "#" not in node.title:
-            new_text = str(node.text) if node.text else str(node.title)
-            new_link = (
-                "["
-                + config["bs_book_url"]
-                + wikilink_to_slug(node.title)
-                + " "
-                + new_text
-                + "]"
-            )
-            replace_list[str(node)] = new_link
+    output = []
 
-        elif re.match(r":?(Datei|File):", str(node.title)):
-            filename = node.title.split(":")[-1]
+    for i, page in enumerate(pages):
+        print(f"🤖 [{i+1}/{len(pages)}]Processing page: [{page.id}] '{page.title}'")
+
+        # Parse the mediawiki
+        replace_list = {}
+        wikicode = mwparserfromhell.parse(page.content)
+        for node in wikicode.ifilter_wikilinks():
+            if ":" not in node.title and "#" not in node.title:
+                new_text = str(node.text) if node.text else str(node.title)
+                new_link = (
+                    "["
+                    + config["bs_book_url"]
+                    + wikilink_to_slug(node.title)
+                    + " "
+                    + new_text
+                    + "]"
+                )
+                replace_list[str(node)] = new_link
+
+            elif re.match(r":?(Datei|File):", str(node.title)):
+                filename = node.title.split(":")[-1]
+                try:
+                    new_img = f"[[File:{load_image_base64(filename)}|{filename}]]"
+                    replace_list[str(node)] = new_img
+                except Exception as e:
+                    print("⚠️ " + str(e))
+
+        # Update the wikicode
+        for old, new in replace_list.items():
             try:
-                new_img = f"[[File:{load_image_base64(filename)}|{filename}]]"
-                replace_list[str(node)] = new_img
+                wikicode.replace(old, new)
             except Exception as e:
                 print("⚠️ " + str(e))
 
-    # Update the wikicode
-    for old, new in replace_list.items():
+        # Convert the wikicode into html with pandoc
         try:
-            wikicode.replace(old, new)
+            html = mediawiki_to_html(str(wikicode))
         except Exception as e:
-            print("⚠️ " + str(e))
+            print("🔥 " + str(e))
+            continue
 
-    # Convert the wikicode into html with pandoc
-    html = mediawiki_to_html(str(wikicode))
+        # Hide meta data:
+        metadata = f"""
+        <!-- 
+        Migrated from the old Space Team MediaWiki by Florian Freitag on {datetime.now().isoformat()}.
+        Migration script can be found at: https://github.com/SpaceTeam/wiki-migration
 
-    # Create the tags
-    tags = {c: "" for c in page.categories}
-    tags.update(
-        {
-            "Letzter Author": page.last_user_email,
-            "Zuletzt bearbeitet": page.timestamp.strftime("%Y-%d-%m %H:%M:%S"),
-        }
-    )
+        Other Metadata:
+        Old ID: {page.id}
+        Orginal Title: {page.title}
+        Last edited on Mediawiki: {page.timestamp.isoformat()}
+        Last user to edit: {page.last_user_email}
+        -->
+        """
+        html = metadata + html
 
-    return NewPage(
-        book_id=config["bs_book_id"],
-        name=page.title.replace("_", " "),
-        html=html,
-        tags=tags,
-    )
+        # Create the tags
+        tags = {c: "" for c in page.categories}
+        tags.update(
+            {
+                "Letzter Author": page.last_user_email,
+                "Zuletzt bearbeitet": page.timestamp.strftime("%Y-%d-%m %H:%M:%S"),
+            }
+        )
+
+        # Add the page
+        output.append(
+            NewPage(
+                old_id=page.id,
+                book_id=config["bs_book_id"],
+                name=page.title.replace("_", " "),
+                html=html,
+                tags=tags,
+            )
+        )
+
+    return output
 
 
 def upload_pages(config: dict, pages: list[NewPage]):
@@ -220,7 +255,7 @@ def upload_pages(config: dict, pages: list[NewPage]):
     )
 
     for i, page in enumerate(pages):
-        print(f"⬆️ [{i+1}/{len(pages)}] Upload page {page.name}")
+        print(f"⬆️ [{i+1}/{len(pages)}] Uploading page: [{page.old_id}] '{page.name}'")
 
         r = session.post(
             config["bs_api_url"] + "pages",
@@ -241,21 +276,14 @@ def main():
 
     print("Downloading... ")
     old_pages = download_pages(config)
-    # old_pages = old_pages[50:60]
-    # print(
-    #     json.dumps(
-    #         process_page(config, old_pages[200]), indent=2, default=lambda p: p.__dict__
-    #     )
-    # )
-    print("Processing... ")
 
-    new_pages = list(map(lambda p: process_page(config, p), old_pages))
+    print("Processing... ")
+    new_pages = process_pages(config, old_pages)
 
     with open("cache.json", "w") as f:
         f.write(json.dumps(new_pages, indent=2, default=lambda p: p.__dict__))
 
-    # print(json.dumps(new_pages[200], indent=2, default=lambda p: p.__dict__))
-    # print("Uploading... ")
+    print("Uploading... ")
     upload_pages(config, new_pages)
 
 

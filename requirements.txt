@@ -1,6 +1,9 @@
 black==22.1.0
+certifi==2021.10.8
+charset-normalizer==2.0.12
 click==8.0.4
 flake8==4.0.1
+idna==3.3
 mccabe==0.6.1
 mwparserfromhell==0.6.4
 mypy-extensions==0.4.3
@@ -10,5 +13,7 @@ platformdirs==2.5.0
 protobuf==3.19.4
 pycodestyle==2.8.0
 pyflakes==2.4.0
+requests==2.27.1
 toml==0.10.2
 tomli==2.0.1
+urllib3==1.26.8

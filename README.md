@@ -48,6 +48,11 @@ to find an image. After a bit of searching I found [documentation how images are
 
 **5) Run the Python script**
 
+Last, I spent a couple of evenings crafting the `main.py` script. Which will
+poll all pages from MySQL, replace all relative links with absolute ones to
+the new wiki (so that linking between pages works), inline images, shell out to
+pandoc to convert mediawiki to html and finally uploads them to BookStack.
+
 First copy `config-example.toml` to `config.toml` and edit the file (the
 comments will guide you).
 
